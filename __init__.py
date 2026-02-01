@@ -25,6 +25,7 @@ class PyTorch210CompatibilityPatcher:
             "required": {},
             "optional": {
                 "force_patch": ("BOOLEAN", {"default": True, "tooltip": "Force patch even if PyTorch < 2.10"}),
+                "fix_string_to_seed": ("BOOLEAN", {"default": True, "tooltip": "Fix string_to_seed deprecation warning"}),
                 "verbose": ("BOOLEAN", {"default": True, "tooltip": "Print patch status"}),
             }
         }
@@ -35,8 +36,10 @@ class PyTorch210CompatibilityPatcher:
     CATEGORY = "WanVideoWrapper/Utils"
     OUTPUT_NODE = True
 
-    def patch_model(self, force_patch=True, verbose=True):
+    def patch_model(self, force_patch=True, fix_string_to_seed=True, verbose=True):
         """Apply PyTorch 2.10 compatibility patch to WanVideoModel"""
+        
+        status_messages = []
         
         # Get PyTorch version
         torch_version = torch.__version__
@@ -99,24 +102,74 @@ class PyTorch210CompatibilityPatcher:
             # Apply monkey patch
             WanVideoModel.__init__ = patched_init
             
-            status = f"✅ WanVideoModel patched for PyTorch {torch_version} compatibility"
+            status_messages.append(f"✅ WanVideoModel patched for PyTorch {torch_version} compatibility")
             if verbose:
-                print(status)
+                print(f"✅ WanVideoModel patched for PyTorch {torch_version} compatibility")
                 print("   → diffusion_model placeholder added")
                 print("   → Compatible with PyTorch 2.9.0 and 2.10.0+")
             
-            return (status,)
-            
         except ImportError as e:
-            status = f"❌ Failed to import WanVideoModel: {e}"
+            msg = f"❌ Failed to import WanVideoModel: {e}"
+            status_messages.append(msg)
             if verbose:
-                print(status)
-            return (status,)
+                print(msg)
         except Exception as e:
-            status = f"❌ Patch failed: {e}"
+            msg = f"❌ WanVideoModel patch failed: {e}"
+            status_messages.append(msg)
             if verbose:
-                print(status)
-            return (status,)
+                print(msg)
+        
+        # Fix string_to_seed deprecation warning
+        if fix_string_to_seed:
+            try:
+                # Find utils module
+                utils_module = None
+                for module_name in sys.modules:
+                    if 'WanVideoWrapper' in module_name and 'utils' in module_name:
+                        utils_module = sys.modules[module_name]
+                        break
+                
+                if utils_module is None:
+                    # Try importing directly
+                    import importlib.util
+                    import os
+                    custom_nodes_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)))
+                    utils_path = os.path.join(custom_nodes_dir, 'ComfyUI-WanVideoWrapper', 'utils.py')
+                    
+                    if os.path.exists(utils_path):
+                        spec = importlib.util.spec_from_file_location("wanvideo_utils", utils_path)
+                        utils_module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(utils_module)
+                
+                if utils_module:
+                    # Patch string_to_seed import in utils module
+                    # Replace the import to use comfy.utils instead of comfy.model_patcher
+                    try:
+                        from comfy.utils import string_to_seed as new_string_to_seed
+                        utils_module.string_to_seed = new_string_to_seed
+                        
+                        msg = "✅ string_to_seed deprecation fixed"
+                        status_messages.append(msg)
+                        if verbose:
+                            print(msg)
+                            print("   → Updated import from comfy.model_patcher to comfy.utils")
+                    except ImportError:
+                        # comfy.utils doesn't have it, keep old import
+                        if verbose:
+                            print("   ℹ️  string_to_seed patch skipped (ComfyUI version doesn't need it)")
+                else:
+                    if verbose:
+                        print("   ℹ️  WanVideoWrapper utils not found, string_to_seed patch skipped")
+                        
+            except Exception as e:
+                msg = f"⚠️  string_to_seed patch failed: {e}"
+                status_messages.append(msg)
+                if verbose:
+                    print(msg)
+        
+        # Return combined status
+        final_status = "\n".join(status_messages) if status_messages else "✅ All patches applied"
+        return (final_status,)
 
 
 class PyTorchVersionChecker:
