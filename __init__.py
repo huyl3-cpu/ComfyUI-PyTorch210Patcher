@@ -52,8 +52,34 @@ class PyTorch210CompatibilityPatcher:
             return (status,)
         
         try:
-            # Import WanVideoModel
-            from ComfyUI.custom_nodes.ComfyUI-WanVideoWrapper.nodes_model_loading import WanVideoModel
+            # Try to find WanVideoModel in sys.modules (already loaded by ComfyUI)
+            wanvideo_module = None
+            for module_name in sys.modules:
+                if 'WanVideoWrapper' in module_name and 'nodes_model_loading' in module_name:
+                    wanvideo_module = sys.modules[module_name]
+                    break
+            
+            if wanvideo_module is None:
+                # Try direct import (different possible paths)
+                try:
+                    from nodes_model_loading import WanVideoModel
+                except:
+                    # Last resort - search in custom_nodes
+                    import importlib.util
+                    import os
+                    custom_nodes_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)))
+                    wrapper_path = os.path.join(custom_nodes_dir, 'ComfyUI-WanVideoWrapper', 'nodes_model_loading.py')
+                    
+                    spec = importlib.util.spec_from_file_location("nodes_model_loading", wrapper_path)
+                    wanvideo_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(wanvideo_module)
+            
+            # Get WanVideoModel class
+            if hasattr(wanvideo_module, 'WanVideoModel'):
+                WanVideoModel = wanvideo_module.WanVideoModel
+            else:
+                WanVideoModel = getattr(wanvideo_module, 'WanVideoModel')
+            
             import torch.nn as nn
             
             # Store original __init__
